@@ -1,35 +1,68 @@
 import os
-import subprocess
-import tempfile
-import pathlib
-import base64
-import shutil
-import time
 import requests
+import base64
 import re
+import time
 
 GITHUB_USER = os.getenv("GITHUB_USER", "")
 GH_TOKEN = os.getenv("GH_TOKEN", "")
-DEFAULT_BRANCH = "main"
-
-def sh(cmd, cwd=None):
-    return subprocess.check_output(cmd, shell=True, cwd=cwd, text=True).strip()
 
 def safe_repo_name(task):
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", task)[:80]
 
-def write_static_app(workdir, brief, attachments):
-    www = pathlib.Path(workdir, "site")
-    www.mkdir(parents=True, exist_ok=True)
-    # Decode attachments into the repo
-    for att in attachments or []:
-        name = att.get("name", "attachment.bin")
-        url = att.get("url", "")
-        if url.startswith("data:"):
-            header, b64 = url.split(",", 1)
-            data = base64.b64decode(b64)
-            pathlib.Path(www, name).write_bytes(data)
-    # Minimal static page
+def github_headers():
+    return {
+        "Authorization": f"token {GH_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+
+def create_repo_if_not_exists(repo_name):
+    # Check if repo exists
+    url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}"
+    r = requests.get(url, headers=github_headers())
+    if r.status_code == 200:
+        return
+    # Create repo
+    url = "https://api.github.com/user/repos"
+    data = {
+        "name": repo_name,
+        "private": False,
+        "auto_init": True,
+        "license_template": "mit"
+    }
+    r = requests.post(url, headers=github_headers(), json=data)
+    if r.status_code not in [201, 422]:  # 422 = already exists
+        raise Exception(f"Repo create failed: {r.text}")
+
+def upload_file(repo_name, path, content, message):
+    url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}/contents/{path}"
+    # Check if file exists to get sha
+    r = requests.get(url, headers=github_headers())
+    if r.status_code == 200:
+        sha = r.json()["sha"]
+    else:
+        sha = None
+    data = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+        "branch": "main"
+    }
+    if sha:
+        data["sha"] = sha
+    r = requests.put(url, headers=github_headers(), json=data)
+    if r.status_code not in [200, 201]:
+        raise Exception(f"File upload failed: {r.text}")
+
+def build_and_deploy(request_payload):
+    task = request_payload["task"]
+    brief = request_payload.get("brief", "")
+    attachments = request_payload.get("attachments", [])
+    repo_name = safe_repo_name(task)
+    pages_url = f"https://{GITHUB_USER}.github.io/{repo_name}/"
+
+    create_repo_if_not_exists(repo_name)
+
+    # index.html
     index_html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -42,39 +75,32 @@ def write_static_app(workdir, brief, attachments):
 </body>
 </html>
 """
-    (www / "index.html").write_text(index_html, encoding="utf-8")
-    readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated.\n"
-    (pathlib.Path(workdir) / "README.md").write_text(readme, encoding="utf-8")
-    return www
+    upload_file(repo_name, "index.html", index_html, "Update index.html")
 
-def build_and_deploy(request_payload):
-    email = request_payload["email"]
-    task = request_payload["task"]
-    brief = request_payload.get("brief", "")
-    attachments = request_payload.get("attachments", [])
-    repo_name = safe_repo_name(task)
-    pages_url = f"https://{GITHUB_USER}.github.io/{repo_name}/"
-    with tempfile.TemporaryDirectory() as td:
-        sh("git init -b main", cwd=td)
-        write_static_app(td, brief, attachments)
-        # Create repo if not exists
-        try:
-            sh(f'gh repo view {repo_name}', cwd=td)
-        except subprocess.CalledProcessError:
-            sh(f'gh repo create {repo_name} --public -l MIT -y', cwd=td)
-        # Move site files to root
-        site = pathlib.Path(td, "site")
-        for p in site.iterdir():
-            shutil.move(str(p), str(pathlib.Path(td, p.name)))
-        shutil.rmtree(site)
-        pathlib.Path(td, ".nojekyll").write_text("", encoding="utf-8")
-        sh('git add .', cwd=td)
-        sh('git commit -m "Update app"', cwd=td)
-        sh('git push -u origin main', cwd=td)
-        time.sleep(5)
-        repo_url = f"https://github.com/{GITHUB_USER}/{repo_name}"
-        commit_sha = sh("git rev-parse HEAD", cwd=td)
-        return {"repo_url": repo_url, "commit_sha": commit_sha, "pages_url": pages_url}
+    # README.md
+    readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated.\n"
+    upload_file(repo_name, "README.md", readme, "Update README.md")
+
+    # .nojekyll
+    upload_file(repo_name, ".nojekyll", "", "Add .nojekyll")
+
+    # MIT License (optional, since auto_init with mit license)
+    # upload_file(repo_name, "LICENSE", mit_license_text, "Add MIT License")
+
+    # Attachments
+    for att in attachments or []:
+        name = att.get("name", "attachment.bin")
+        url = att.get("url", "")
+        if url.startswith("data:"):
+            header, b64 = url.split(",", 1)
+            data = base64.b64decode(b64)
+            upload_file(repo_name, name, data.decode("utf-8"), f"Add {name}")
+
+    # Wait for GitHub Pages to deploy (first time can take a few minutes)
+    time.sleep(5)
+    repo_url = f"https://github.com/{GITHUB_USER}/{repo_name}"
+    commit_sha = "main"  # Not strictly needed for API-based push
+    return {"repo_url": repo_url, "commit_sha": commit_sha, "pages_url": pages_url}
 
 def post_evaluation(request_payload, result):
     data = {
