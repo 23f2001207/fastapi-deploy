@@ -17,12 +17,10 @@ def github_headers():
     }
 
 def create_repo_if_not_exists(repo_name):
-    # Check if repo exists
     url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}"
     r = requests.get(url, headers=github_headers())
     if r.status_code == 200:
         return
-    # Create repo
     url = "https://api.github.com/user/repos"
     data = {
         "name": repo_name,
@@ -31,10 +29,10 @@ def create_repo_if_not_exists(repo_name):
         "license_template": "mit"
     }
     r = requests.post(url, headers=github_headers(), json=data)
-    if r.status_code not in [201, 422]:  # 422 = already exists
+    if r.status_code not in [201, 422]:
         raise Exception(f"Repo create failed: {r.text}")
 
-def upload_file(repo_name, path, content, message):
+def upload_file(repo_name, path, content_bytes, message):
     url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}/contents/{path}"
     # Check if file exists to get sha
     r = requests.get(url, headers=github_headers())
@@ -44,7 +42,7 @@ def upload_file(repo_name, path, content, message):
         sha = None
     data = {
         "message": message,
-        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+        "content": base64.b64encode(content_bytes).decode("utf-8"),
         "branch": "main"
     }
     if sha:
@@ -75,31 +73,27 @@ def build_and_deploy(request_payload):
 </body>
 </html>
 """
-    upload_file(repo_name, "index.html", index_html, "Update index.html")
+    upload_file(repo_name, "index.html", index_html.encode("utf-8"), "Update index.html")
 
     # README.md
     readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated.\n"
-    upload_file(repo_name, "README.md", readme, "Update README.md")
+    upload_file(repo_name, "README.md", readme.encode("utf-8"), "Update README.md")
 
     # .nojekyll
-    upload_file(repo_name, ".nojekyll", "", "Add .nojekyll")
+    upload_file(repo_name, ".nojekyll", b"", "Add .nojekyll")
 
-    # MIT License (optional, since auto_init with mit license)
-    # upload_file(repo_name, "LICENSE", mit_license_text, "Add MIT License")
-
-    # Attachments
+    # Attachments (handles both text and binary)
     for att in attachments or []:
         name = att.get("name", "attachment.bin")
         url = att.get("url", "")
         if url.startswith("data:"):
             header, b64 = url.split(",", 1)
-            data = base64.b64decode(b64)
-            upload_file(repo_name, name, data.decode("utf-8"), f"Add {name}")
+            data_bytes = base64.b64decode(b64)
+            upload_file(repo_name, name, data_bytes, f"Add {name}")
 
-    # Wait for GitHub Pages to deploy (first time can take a few minutes)
     time.sleep(5)
     repo_url = f"https://github.com/{GITHUB_USER}/{repo_name}"
-    commit_sha = "main"  # Not strictly needed for API-based push
+    commit_sha = "main"
     return {"repo_url": repo_url, "commit_sha": commit_sha, "pages_url": pages_url}
 
 def post_evaluation(request_payload, result):
