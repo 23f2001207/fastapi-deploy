@@ -3,6 +3,10 @@ from pydantic import BaseModel
 import os
 from generator import build_and_deploy, post_evaluation
 
+print("APP_SECRET:", os.getenv("APP_SECRET"))
+print("GITHUB_USER:", os.getenv("GITHUB_USER"))
+print("GH_TOKEN:", os.getenv("GH_TOKEN"))
+
 app = FastAPI()
 
 SECRET = os.getenv("APP_SECRET", "aryan-secret")
