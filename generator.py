@@ -8,6 +8,7 @@ GITHUB_USER = os.getenv("GITHUB_USER", "")
 GH_TOKEN = os.getenv("GH_TOKEN", "")
 
 def safe_repo_name(task):
+    # Converts task to a safe repo name, e.g., "captcha-solver-01"
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", task)[:80]
 
 def github_headers():
@@ -17,14 +18,19 @@ def github_headers():
     }
 
 def create_repo_if_not_exists(repo_name):
+    # Try to get repo info
     url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}"
     r = requests.get(url, headers=github_headers())
     if r.status_code == 200:
         return
+    # Create the repo if not exists
     url = "https://api.github.com/user/repos"
     data = {
         "name": repo_name,
         "private": False,
+        "has_issues": False,
+        "has_projects": False,
+        "has_wiki": False,
         "auto_init": True,
         "license_template": "mit"
     }
@@ -33,13 +39,10 @@ def create_repo_if_not_exists(repo_name):
         raise Exception(f"Repo create failed: {r.text}")
 
 def upload_file(repo_name, path, content_bytes, message):
+    # Upload any file, binary or text
     url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}/contents/{path}"
-    # Check if file exists to get sha
     r = requests.get(url, headers=github_headers())
-    if r.status_code == 200:
-        sha = r.json()["sha"]
-    else:
-        sha = None
+    sha = r.json()["sha"] if r.status_code == 200 else None
     data = {
         "message": message,
         "content": base64.b64encode(content_bytes).decode("utf-8"),
@@ -58,6 +61,7 @@ def build_and_deploy(request_payload):
     repo_name = safe_repo_name(task)
     pages_url = f"https://{GITHUB_USER}.github.io/{repo_name}/"
 
+    # Always ensure repo for this task
     create_repo_if_not_exists(repo_name)
 
     # index.html
@@ -82,12 +86,12 @@ def build_and_deploy(request_payload):
     # .nojekyll
     upload_file(repo_name, ".nojekyll", b"", "Add .nojekyll")
 
-    # Attachments (handles both text and binary)
+    # Attachments — handles each as a separate file
     for att in attachments or []:
         name = att.get("name", "attachment.bin")
         url = att.get("url", "")
         if url.startswith("data:"):
-            header, b64 = url.split(",", 1)
+            _, b64 = url.split(",", 1)
             data_bytes = base64.b64decode(b64)
             upload_file(repo_name, name, data_bytes, f"Add {name}")
 
