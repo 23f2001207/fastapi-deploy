@@ -3,10 +3,11 @@ import requests
 import base64
 import re
 import time
+import google.generativeai as genai
 
 GITHUB_USER = os.getenv("GITHUB_USER", "")
 GH_TOKEN = os.getenv("GH_TOKEN", "")
-AIPIPE_TOKEN = os.getenv("AIPIPE_TOKEN", "")  # Set this in Render
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 def safe_repo_name(task):
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", task)[:80]
@@ -63,7 +64,8 @@ def enable_github_pages(repo_name):
     if r.status_code not in [201, 409]:
         raise Exception(f"Failed to enable GitHub Pages: {r.text}")
 
-def generate_app_code_with_llm(brief, attachments=None):
+def generate_app_code_with_gemini(brief, attachments=None):
+    genai.configure(api_key=GEMINI_API_KEY)
     prompt = f"""You are an expert web developer. Write a minimal HTML+JS+CSS app that fulfills this brief:
 {brief}
 """
@@ -71,22 +73,9 @@ def generate_app_code_with_llm(brief, attachments=None):
         prompt += "\nAttachments provided:\n"
         for att in attachments:
             prompt += f"- {att['name']}\n"
-    url = "https://aipipe.org/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {AIPIPE_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "openai/gpt-4o-mini",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
-    }
-    response = requests.post(url, headers=headers, json=data)
-    response.raise_for_status()
-    result = response.json()
-    code = result["choices"][0]["message"]["content"]
-    return code
+    model = genai.GenerativeModel("gemini-1.5-pro")
+    response = model.generate_content(prompt)
+    return response.text
 
 def build_and_deploy(request_payload):
     task = request_payload["task"]
@@ -97,12 +86,12 @@ def build_and_deploy(request_payload):
 
     create_repo_if_not_exists(repo_name)
 
-    # Use LLM to generate index.html
-    index_html = generate_app_code_with_llm(brief, attachments)
+    # Use Gemini to generate index.html
+    index_html = generate_app_code_with_gemini(brief, attachments)
     upload_file(repo_name, "index.html", index_html.encode("utf-8"), "Update index.html")
 
     # README.md
-    readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated using AI Pipe LLM.\n"
+    readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated using Gemini LLM.\n"
     upload_file(repo_name, "README.md", readme.encode("utf-8"), "Update README.md")
 
     # .nojekyll
