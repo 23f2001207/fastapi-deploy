@@ -6,9 +6,9 @@ import time
 
 GITHUB_USER = os.getenv("GITHUB_USER", "")
 GH_TOKEN = os.getenv("GH_TOKEN", "")
+AIPIPE_TOKEN = os.getenv("AIPIPE_TOKEN", "")  # Set this in Render
 
 def safe_repo_name(task):
-    # Converts task to a safe repo name, e.g., "captcha-solver-01"
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", task)[:80]
 
 def github_headers():
@@ -18,12 +18,10 @@ def github_headers():
     }
 
 def create_repo_if_not_exists(repo_name):
-    # Try to get repo info
     url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}"
     r = requests.get(url, headers=github_headers())
     if r.status_code == 200:
         return
-    # Create the repo if not exists
     url = "https://api.github.com/user/repos"
     data = {
         "name": repo_name,
@@ -39,7 +37,6 @@ def create_repo_if_not_exists(repo_name):
         raise Exception(f"Repo create failed: {r.text}")
 
 def upload_file(repo_name, path, content_bytes, message):
-    # Upload any file, binary or text
     url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}/contents/{path}"
     r = requests.get(url, headers=github_headers())
     sha = r.json()["sha"] if r.status_code == 200 else None
@@ -63,10 +60,33 @@ def enable_github_pages(repo_name):
         }
     }
     r = requests.post(url, headers=github_headers(), json=data)
-    # If already enabled, this will return 409; that's fine
     if r.status_code not in [201, 409]:
         raise Exception(f"Failed to enable GitHub Pages: {r.text}")
 
+def generate_app_code_with_llm(brief, attachments=None):
+    prompt = f"""You are an expert web developer. Write a minimal HTML+JS+CSS app that fulfills this brief:
+{brief}
+"""
+    if attachments:
+        prompt += "\nAttachments provided:\n"
+        for att in attachments:
+            prompt += f"- {att['name']}\n"
+    url = "https://aipipe.org/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {AIPIPE_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "openai/gpt-4o-mini",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    response.raise_for_status()
+    result = response.json()
+    code = result["choices"][0]["message"]["content"]
+    return code
 
 def build_and_deploy(request_payload):
     task = request_payload["task"]
@@ -75,26 +95,14 @@ def build_and_deploy(request_payload):
     repo_name = safe_repo_name(task)
     pages_url = f"https://{GITHUB_USER}.github.io/{repo_name}/"
 
-    # Always ensure repo for this task
     create_repo_if_not_exists(repo_name)
 
-    # index.html
-    index_html = f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Task App</title>
-</head>
-<body>
-<h1>Task App</h1>
-<p>{brief}</p>
-</body>
-</html>
-"""
+    # Use LLM to generate index.html
+    index_html = generate_app_code_with_llm(brief, attachments)
     upload_file(repo_name, "index.html", index_html.encode("utf-8"), "Update index.html")
 
     # README.md
-    readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated.\n"
+    readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated using AI Pipe LLM.\n"
     upload_file(repo_name, "README.md", readme.encode("utf-8"), "Update README.md")
 
     # .nojekyll
@@ -103,7 +111,7 @@ def build_and_deploy(request_payload):
     # Enable GitHub Pages
     enable_github_pages(repo_name)
 
-    # Attachments — handles each as a separate file
+    # Attachments
     for att in attachments or []:
         name = att.get("name", "attachment.bin")
         url = att.get("url", "")
