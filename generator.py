@@ -73,7 +73,7 @@ def generate_app_code_with_gemini(brief, attachments=None):
         prompt += "\nAttachments provided:\n"
         for att in attachments:
             prompt += f"- {att['name']}\n"
-    model = genai.GenerativeModel("gemini-pro")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     response = model.generate_content(prompt)
     return response.text
 
