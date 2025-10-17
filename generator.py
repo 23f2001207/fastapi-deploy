@@ -73,7 +73,7 @@ def generate_app_code_with_gemini(brief, attachments=None):
         prompt += "\nAttachments provided:\n"
         for att in attachments:
             prompt += f"- {att['name']}\n"
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    model = genai.GenerativeModel("gemini-pro")
     response = model.generate_content(prompt)
     return response.text
 
@@ -90,8 +90,33 @@ def build_and_deploy(request_payload):
     index_html = generate_app_code_with_gemini(brief, attachments)
     upload_file(repo_name, "index.html", index_html.encode("utf-8"), "Update index.html")
 
-    # README.md
-    readme = f"# Task App\n\nBrief: {brief}\n\nThis app is auto-generated using Gemini LLM.\n"
+    # Professional README.md
+    readme = f"""# Task App
+
+## Summary
+This project was generated automatically in response to the following brief:
+
+> {brief}
+
+The app is built using HTML, CSS, and JavaScript, and is designed to be minimal, functional, and easy to use.
+
+## Setup
+- No installation required.
+- Visit the live site at: https://{GITHUB_USER}.github.io/{repo_name}/
+- Or, download the repository and open `index.html` in your browser.
+
+## Usage
+- Follow the instructions on the web page.
+- If the app supports file uploads or URL parameters, use them as described in the brief above.
+
+## Code Explanation
+- The main logic is in `index.html`, which contains all HTML, CSS, and JavaScript.
+- The code was generated using Google Gemini LLM based on the provided brief.
+- Attachments (if any) are included in the repository and referenced by the app as needed.
+
+## License
+This repository is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+"""
     upload_file(repo_name, "README.md", readme.encode("utf-8"), "Update README.md")
 
     # .nojekyll
