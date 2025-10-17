@@ -54,6 +54,20 @@ def upload_file(repo_name, path, content_bytes, message):
     if r.status_code not in [200, 201]:
         raise Exception(f"File upload failed: {r.text}")
 
+def enable_github_pages(repo_name):
+    url = f"https://api.github.com/repos/{GITHUB_USER}/{repo_name}/pages"
+    data = {
+        "source": {
+            "branch": "main",
+            "path": "/"
+        }
+    }
+    r = requests.post(url, headers=github_headers(), json=data)
+    # If already enabled, this will return 409; that's fine
+    if r.status_code not in [201, 409]:
+        raise Exception(f"Failed to enable GitHub Pages: {r.text}")
+
+
 def build_and_deploy(request_payload):
     task = request_payload["task"]
     brief = request_payload.get("brief", "")
@@ -85,6 +99,9 @@ def build_and_deploy(request_payload):
 
     # .nojekyll
     upload_file(repo_name, ".nojekyll", b"", "Add .nojekyll")
+
+    # Enable GitHub Pages
+    enable_github_pages(repo_name)
 
     # Attachments — handles each as a separate file
     for att in attachments or []:
